@@ -18,6 +18,7 @@ package com.example.android.musicplayer;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.net.Uri;
@@ -27,6 +28,15 @@ import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.widget.ProgressBar;
+import android.widget.SeekBar;
+import android.widget.TextView;
+
+import android.view.Menu;
+import android.view.MenuInflater;
+
+import com.example.android.musicplayer.R;
 
 /** 
  * Main activity: shows media player buttons. This activity shows the media player buttons and
@@ -39,13 +49,26 @@ public class MainActivity extends Activity implements OnClickListener {
      * have to find an URL to test this sample.
      */
     final String SUGGESTED_URL = "http://www.vorbis.com/music/Epoq-Lepidoptera.ogg";
-
+    static public Uri SongInfoStoreUri;
+    
+    
     Button mPlayButton;
     Button mPauseButton;
     Button mSkipButton;
     Button mRewindButton;
     Button mStopButton;
     Button mEjectButton;
+    SeekBar mSeekbar;
+	Button mSongList;
+	TextView albumTitle;
+	TextView songTitle;
+	TextView artistTitle;
+	TextView progressed;
+	TextView remaining;
+	ImageView mAlbumArt;
+	ProgressBar progress;
+	Button mRepeat;
+	Button mShuffle;
 
     /**
      * Called when the activity is first created. Here, we simply set the event listeners and
@@ -56,7 +79,25 @@ public class MainActivity extends Activity implements OnClickListener {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
-
+        
+		startService(new Intent(MusicService.ACTION_READY));
+		Bundle extras = getIntent().getExtras();
+		
+		//SongInfoStoreUri = (savedInstanceState == null) ? null : (Uri) savedInstanceState.getParcelable(SongInfoStoreContentProvider.CONTENT_ITEM_TYPE);
+		
+		/*
+		 * if (extras != null) {
+			SongInfoStoreUri = extras.getParcelable(SongInfoStoreContentProvider.CONTENT_ITEM_TYPE);
+			System.out.println(SongInfoStoreUri);
+		}
+		*/
+		//Intent checkIntent = new Intent();
+		//checkIntent.setAction(TextToSpeech.Engine.ACTION_CHECK_TTS_DATA);
+		//startActivityForResult(checkIntent, MY_DATA_CHECK_CODE);
+		
+		//setContentView(R.layout.main);
+		
+/*
         mPlayButton = (Button) findViewById(R.id.playbutton);
         mPauseButton = (Button) findViewById(R.id.pausebutton);
         mSkipButton = (Button) findViewById(R.id.skipbutton);
@@ -70,11 +111,31 @@ public class MainActivity extends Activity implements OnClickListener {
         mRewindButton.setOnClickListener(this);
         mStopButton.setOnClickListener(this);
         mEjectButton.setOnClickListener(this);
+      */
+		mPlayButton = (Button) findViewById(R.id.playbutton);
+		mPauseButton = (Button) findViewById(R.id.pausebutton);
+		mPauseButton.setVisibility(View.GONE);
+		mSkipButton = (Button) findViewById(R.id.skipbutton);
+		mRewindButton = (Button) findViewById(R.id.rewindbutton);
+		mSeekbar = (SeekBar) findViewById(R.id.seekbar);
+		mSongList = (Button) findViewById(R.id.songlist);
+		albumTitle = ((TextView) findViewById(R.id.album_title));
+		songTitle = ((TextView) findViewById(R.id.song_title));
+		artistTitle = ((TextView)  findViewById(R.id.artist_title));
+		progressed = ((TextView) findViewById(R.id.timepassed));
+		remaining = ((TextView) findViewById(R.id.timeremaining));
+		mAlbumArt = ((ImageView) findViewById(R.id.imageView1));
+		progress = (ProgressBar) findViewById(R.id.progress);
+		mRepeat = (Button) findViewById(R.id.repeat);
+		mShuffle = (Button) findViewById(R.id.shuffle);
+		mAlbumArt.setImageBitmap(null);
+		
+		
     }
 
     public void onClick(View target) {
         // Send the correct intent to the MusicService, according to the button that was clicked
-        if (target == mPlayButton)
+    	if (target == mPlayButton)
             startService(new Intent(MusicService.ACTION_PLAY));
         else if (target == mPauseButton)
             startService(new Intent(MusicService.ACTION_PAUSE));
@@ -130,4 +191,36 @@ public class MainActivity extends Activity implements OnClickListener {
         }
         return super.onKeyDown(keyCode, event);
     }
+    
+    protected void onSaveInstanceState(Bundle outState) {
+		super.onSaveInstanceState(outState);
+		//outState.putParcelable(SongInfoStoreContentProvider.CONTENT_ITEM_TYPE, SongInfoStoreUri);
+	}
+	
+	public boolean onCreateOptionsMenu(Menu menu) {
+		System.out.println("Menu Created");
+	    MenuInflater inflater = getMenuInflater();
+	    inflater.inflate(R.layout.main, menu);
+	    return true;
+	}
+	
+	
+	/*
+	 public void onBackPressed(){
+		Context ctx = (Context) this.getApplicationContext();
+		startActivity(new Intent(ctx, SongList.class));
+	}
+	*/
+
+	public void onUtteranceCompleted(String utteranceId) {
+		
+		Context ctx = (Context) this.getApplicationContext();
+		ctx.startService(new Intent(MusicService.ACTION_PLAY));
+
+		
+	}
+
+	public void onInit(int status) {
+		// TODO Auto-generated method stub
+	}
 }

@@ -39,8 +39,15 @@ import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.WifiLock;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.Bundle;
 import android.util.Log;
 import android.widget.Toast;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import com.example.android.musicplayer.R;
+import com.example.android.musicplayer.MusicRetriever.Item;
+
 
 /**
  * Service that handles media playback. This is the Service through which we perform all the media
@@ -68,13 +75,30 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
     public static final String ACTION_SKIP = "com.example.android.musicplayer.action.SKIP";
     public static final String ACTION_REWIND = "com.example.android.musicplayer.action.REWIND";
     public static final String ACTION_URL = "com.example.android.musicplayer.action.URL";
+   
+	public static final String ACTION_READY = "com.example.android.musicplayer.action.READY";
+	public static final String ACTION_QUERY = "com.example.android.musicplayer.action.QUERY";
 
+	public static final String ACTION_URI = "com.example.android.musicplayer.action.URI";
+	public static final String ACTION_SEEK = "com.example.android.musicplayer.action.Seek";
+	public static final String ACTION_DISPLAY = "com.example.android.musicplayer.action.DISPLAY";
+	public static final String ACTION_SHUFFLE = "com.example.android.musicplayer.action.SHUFFLE";
+	public static final String ACTION_REPEAT = "com.example.android.musicplayer.action.REPEAT";
+	public static final String ACTION_FORWARD = "com.example.android.musicplayer.action.FORWARD";
+	public static final String ACTION_BACK = "com.example.android.musicplayer.action.BACK";
+	
+	MusicRetriever.Item playingItem;
+	
     // The volume we set the media player to when we lose audio focus, but are allowed to reduce
     // the volume instead of stopping playback.
     public static final float DUCK_VOLUME = 0.1f;
 
     // our media player
-    MediaPlayer mPlayer = null;
+    static MediaPlayer mPlayer = null;
+
+	static boolean startingup = true;
+	
+	static boolean constructingPlaylist = false;
 
     // our AudioFocusHelper object, if it's available (it's available on SDK level >= 8)
     // If not available, this will be null. Always check for null before using!
@@ -119,6 +143,8 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
 
     // title of the song we are currently playing
     String mSongTitle = "";
+    // title of the artist we are currrently listening to
+    String mArtistTitle = "";
 
     // whether the song we are playing is streaming from the network
     boolean mIsStreaming = false;
@@ -134,7 +160,7 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
 
     // Our instance of our MusicRetriever, which handles scanning for media and
     // providing titles and URIs as we need.
-    MusicRetriever mRetriever;
+    static MusicRetriever mRetriever;
 
     // our RemoteControlClient object, which will use remote control APIs available in
     // SDK level >= 14, if they're available.
@@ -211,18 +237,44 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent.getAction();
-        if (action.equals(ACTION_TOGGLE_PLAYBACK)) processTogglePlaybackRequest();
-        else if (action.equals(ACTION_PLAY)) processPlayRequest();
-        else if (action.equals(ACTION_PAUSE)) processPauseRequest();
-        else if (action.equals(ACTION_SKIP)) processSkipRequest();
-        else if (action.equals(ACTION_STOP)) processStopRequest();
-        else if (action.equals(ACTION_REWIND)) processRewindRequest();
-        else if (action.equals(ACTION_URL)) processAddRequest(intent);
+		if (action.equals(ACTION_TOGGLE_PLAYBACK))
+			processTogglePlaybackRequest();
+		else if (action.equals(ACTION_READY))
+			processReadyRequest();
+		else if (action.equals(ACTION_PLAY))
+			processPlayRequest();
+		else if (action.equals(ACTION_PAUSE))
+			processPauseRequest();
+		else if (action.equals(ACTION_SKIP))
+			processSkipRequest();
+		else if (action.equals(ACTION_STOP))
+			processStopRequest();
+		else if (action.equals(ACTION_REWIND))
+			processRewindRequest();
+		else if (action.equals(ACTION_URL))
+			processAddRequest(intent);
+		else if (action.equals(ACTION_URI))
+			processURIRequest(intent);
+		else if (action.equals(ACTION_SHUFFLE))
+			processShuffleRequest();
+		else if (action.equals(ACTION_REPEAT))
+			processRepeatRequest();
+		else if (action.equals(ACTION_FORWARD))
+			processFastForwardRequest();
+		else if (action.equals(ACTION_BACK))
+			processGoBackRequest();
 
         return START_NOT_STICKY; // Means we started the service, but don't want it to
                                  // restart in case it's killed.
     }
-
+    
+	private void processReadyRequest() {
+		
+		mWhatToPlayAfterRetrieve = null;
+		mStartPlayingAfterRetrieve = false;
+		tryToGetAudioFocus();
+	}
+	
     void processTogglePlaybackRequest() {
         if (mState == State.Paused || mState == State.Stopped) {
             processPlayRequest();
@@ -286,14 +338,170 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
     }
 
     void processRewindRequest() {
-        if (mState == State.Playing || mState == State.Paused)
-            mPlayer.seekTo(0);
+        //if (mState == State.Playing || mState == State.Paused)
+        //    mPlayer.seekTo(0);
+    	if (mState == State.Playing || mState == State.Paused)
+			tryToGetAudioFocus();
+		playPreviousSong(null);
     }
+    
+    private void processAddRequest(Intent intent) {
 
+		// user wants to play a song directly by URL or path. The URL or path
+		// comes in the "data"
+		// part of the Intent. This Intent is sent by {@link MainActivity} after
+		// the user
+		// specifies the URL/path via an alert box.
+		if (mState == State.Retrieving) {
+			// we'll play the requested URL right after we finish retrieving
+			mWhatToPlayAfterRetrieve = intent.getData();
+			mStartPlayingAfterRetrieve = true;
+		} else if (mState == State.Playing || mState == State.Paused
+				|| mState == State.Stopped) {
+			Log.i(TAG, "Playing from URL/path: " + intent.getData().toString());
+			System.out.println("Process Add Request "
+					+ intent.getData().toString());
+			tryToGetAudioFocus();
+			playNextSong(intent.getData().toString());
+		}
+	}
+	
+	private void processURIRequest(Intent intent) {
+		Bundle extras = intent.getExtras();
+		int p = extras.getInt("Position");
+		mStartPlayingAfterRetrieve = true;
+		createMediaPlayerIfNeeded();
+		mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+		try {
+			playGivenSong(p);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+	
+
+	private void processShuffleRequest(){
+		Item tempItem = null;
+		try {
+			tempItem = MusicRetriever.getCurrentSong();
+		} catch (InterruptedException e1) {
+		}
+		System.out.println(MusicRetriever.mposition);
+			MusicRetriever.shuffle = !MusicRetriever.shuffle;
+			if (MusicRetriever.shuffle){
+				if (MusicRetriever.usingGenPlaylist){
+					MusicRetriever.ShuffleGeneratedPlaylist(MusicRetriever.mposition);
+					MusicRetriever.mposition = -1;
+					return;
+				}
+				if (MusicRetriever.mainSongList) {
+					MusicRetriever.ShuffleOrderedSongs(MusicRetriever.mposition);
+					MusicRetriever.mposition = -1;
+					return;
+				}
+				if (MusicRetriever.usingPlaylist) {
+					MusicRetriever.ShufflePlaylist(MusicRetriever.mposition);
+					MusicRetriever.mposition = -1;
+					return;
+				} else {
+					MusicRetriever.ShufflemItems(MusicRetriever.mposition);
+					MusicRetriever.mposition = -1;
+					return;
+				}
+			} else {
+				if (MusicRetriever.usingGenPlaylist){
+					int index = 0;
+					try {
+						for (Item item : MusicRetriever.getGeneratedPlaylist()){
+							System.out.println(index + " " + item.getTitle() + " " + MusicRetriever.getCurrentSong().getTitle());
+							if (item.equals(tempItem)){
+								break;
+							}
+							index++;
+						}
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					MusicRetriever.mposition = index - 1;
+					return;
+				}
+				if (MusicRetriever.mainSongList) {
+					int index = 0;
+					try {
+						for (Item item : MusicRetriever.getOrderedSongs()){
+							System.out.println(index + " " + item.getTitle() + " " + MusicRetriever.getCurrentSong().getTitle());
+							if (item.equals(tempItem)){
+								break;
+							}
+							index++;
+						}
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					MusicRetriever.mposition = index - 1;
+					return;
+				}
+				if (MusicRetriever.usingPlaylist) {
+					int index = 0;
+					try {
+						for (Item item : MusicRetriever.getPlaylist()){
+							System.out.println(index + " " + item.getTitle() + " " + MusicRetriever.getCurrentSong().getTitle());
+							if (item.equals(tempItem)){
+								break;
+							}
+							index++;
+						}
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					MusicRetriever.mposition = index - 1;
+					return;
+				} else {
+					int index = 0;
+					try {
+						for (Item item : MusicRetriever.getItems()){
+							System.out.println(index + " " + item.getTitle() + " " + MusicRetriever.getCurrentSong().getTitle());
+							if (item.equals(tempItem)){
+								break;
+							}
+							index++;
+						}
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					MusicRetriever.mposition = index - 1;
+					return;
+				}
+			}
+	}
+	
+	private void processRepeatRequest(){
+		if (MusicRetriever.repeat){
+			MusicRetriever.repeat = false;	
+		}
+		else{
+			MusicRetriever.repeat = true;
+			
+		}
+		
+	}
+	
+	private void processFastForwardRequest(){
+		mPlayer.seekTo(mPlayer.getCurrentPosition() + 3000);
+	}
+	
+	private void processGoBackRequest(){
+		System.out.println("Going back");
+		mPlayer.seekTo(mPlayer.getCurrentPosition() - 4000);
+	}
+	
     void processSkipRequest() {
         if (mState == State.Playing || mState == State.Paused) {
             tryToGetAudioFocus();
-            playNextSong(null);
+        	try {
+				playNextSong(null);
+			} catch (IndexOutOfBoundsException e) {
+			}
         }
     }
 
@@ -346,6 +554,7 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
                                 && mAudioFocusHelper.abandonFocus())
             mAudioFocus = AudioFocus.NoFocusNoDuck;
     }
+    
 
     /**
      * Reconfigures MediaPlayer according to audio focus settings and starts/restarts it. This
@@ -371,22 +580,6 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
         if (!mPlayer.isPlaying()) mPlayer.start();
     }
 
-    void processAddRequest(Intent intent) {
-        // user wants to play a song directly by URL or path. The URL or path comes in the "data"
-        // part of the Intent. This Intent is sent by {@link MainActivity} after the user
-        // specifies the URL/path via an alert box.
-        if (mState == State.Retrieving) {
-            // we'll play the requested URL right after we finish retrieving
-            mWhatToPlayAfterRetrieve = intent.getData();
-            mStartPlayingAfterRetrieve = true;
-        }
-        else if (mState == State.Playing || mState == State.Paused || mState == State.Stopped) {
-            Log.i(TAG, "Playing from URL/path: " + intent.getData().toString());
-            tryToGetAudioFocus();
-            playNextSong(intent.getData().toString());
-        }
-    }
-
     void tryToGetAudioFocus() {
         if (mAudioFocus != AudioFocus.Focused && mAudioFocusHelper != null
                         && mAudioFocusHelper.requestFocus())
@@ -399,109 +592,393 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
      * manualUrl is non-null, then it specifies the URL or path to the song that will be played
      * next.
      */
-    void playNextSong(String manualUrl) {
-        mState = State.Stopped;
-        relaxResources(false); // release everything except MediaPlayer
+    public synchronized void playNextSong(String manualUrl) {
+		mState = State.Stopped;
+		relaxResources(false); // release everything except MediaPlayer
 
-        try {
-            MusicRetriever.Item playingItem = null;
-            if (manualUrl != null) {
-                // set the source of the media player to a manual URL or path
-                createMediaPlayerIfNeeded();
-                mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                mPlayer.setDataSource(manualUrl);
-                mIsStreaming = manualUrl.startsWith("http:") || manualUrl.startsWith("https:");
+		try {
+			MusicRetriever.Item playingItem = null;
+			if (manualUrl != null) {
+				// set the source of the media player to a manual URL or path
+				createMediaPlayerIfNeeded();
+				mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+				mPlayer.setDataSource(manualUrl);
+				mIsStreaming = manualUrl.startsWith("http:")
+						|| manualUrl.startsWith("https:");
 
-                playingItem = new MusicRetriever.Item(0, null, manualUrl, null, 0);
-            }
-            else {
-                mIsStreaming = false; // playing a locally available song
+				playingItem = new MusicRetriever.Item(0, null, manualUrl, null,
+						0, 0);
+			} else {
+				mIsStreaming = false; // playing a locally available song
+				try {
+					if (startingup){
+						playingItem = MusicRetriever.getCurrentSong();
+						startingup = false;
+					}
+					else {
+							playingItem = mRetriever.getNextItem();
+					}
+				} catch (Exception e) {
+					playGivenSong(0);
+					return;
+				}
+				
+				// Here we are looping back to the start of the playlist
+				
+				if (playingItem == null) {
+					if (MusicRetriever.repeat){
+					playingItem = mRetriever.getGivenItem(0);
+					}
+					else {
+						playingItem = mRetriever.getGivenItem(0);
+						mPlayer.seekTo(0);
+						mPlayer.stop();
+						return;
+					}
+				}
 
-                playingItem = mRetriever.getRandomItem();
-                if (playingItem == null) {
-                    Toast.makeText(this,
-                            "No available music to play. Place some music on your external storage "
-                            + "device (e.g. your SD card) and try again.",
-                            Toast.LENGTH_LONG).show();
-                    processStopRequest(true); // stop everything!
-                    return;
-                }
+				// set the source of the media player a a content URI
+				createMediaPlayerIfNeeded();
+				mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+				try {
+					mPlayer.setDataSource(getApplicationContext(),
+							playingItem.getURI());
+				} catch (IllegalStateException e) {
+					System.out.println("Exception caught");
+				}
+				;
+			}
+			mSongTitle = playingItem.getTitle();
+			mArtistTitle = playingItem.getArtist();
 
-                // set the source of the media player a a content URI
-                createMediaPlayerIfNeeded();
-                mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                mPlayer.setDataSource(getApplicationContext(), playingItem.getURI());
-            }
+			mState = State.Preparing;
+			setUpAsForeground(mSongTitle);
 
-            mSongTitle = playingItem.getTitle();
+			// Use the media button APIs (if available) to register ourselves
+			// for media button
+			// events
 
-            mState = State.Preparing;
-            setUpAsForeground(mSongTitle + " (loading)");
+			MediaButtonHelper.registerMediaButtonEventReceiverCompat(
+					mAudioManager, mMediaButtonReceiverComponent);
 
-            // Use the media button APIs (if available) to register ourselves for media button
-            // events
+			// Use the remote control APIs (if available) to set the playback
+			// state
 
-            MediaButtonHelper.registerMediaButtonEventReceiverCompat(
-                    mAudioManager, mMediaButtonReceiverComponent);
+			if (mRemoteControlClientCompat == null) {
+				Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+				intent.setComponent(mMediaButtonReceiverComponent);
+				mRemoteControlClientCompat = new RemoteControlClientCompat(
+						PendingIntent.getBroadcast(this /* context */, 0 /*
+																		 * requestCode
+																		 * ,
+																		 * ignored
+																		 */,
+								intent /* intent */, 0 /* flags */));
+				RemoteControlHelper.registerRemoteControlClient(mAudioManager,
+						mRemoteControlClientCompat);
+			}
 
-            // Use the remote control APIs (if available) to set the playback state
+			mRemoteControlClientCompat
+					.setPlaybackState(RemoteControlClient.PLAYSTATE_PLAYING);
 
-            if (mRemoteControlClientCompat == null) {
-                Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
-                intent.setComponent(mMediaButtonReceiverComponent);
-                mRemoteControlClientCompat = new RemoteControlClientCompat(
-                        PendingIntent.getBroadcast(this /*context*/,
-                                0 /*requestCode, ignored*/, intent /*intent*/, 0 /*flags*/));
-                RemoteControlHelper.registerRemoteControlClient(mAudioManager,
-                        mRemoteControlClientCompat);
-            }
+			mRemoteControlClientCompat
+					.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY
+							| RemoteControlClient.FLAG_KEY_MEDIA_PAUSE
+							| RemoteControlClient.FLAG_KEY_MEDIA_NEXT
+							| RemoteControlClient.FLAG_KEY_MEDIA_STOP);
 
-            mRemoteControlClientCompat.setPlaybackState(
-                    RemoteControlClient.PLAYSTATE_PLAYING);
+			// Update the remote controls
+			mRemoteControlClientCompat
+					.editMetadata(true)
+					.putString(MediaMetadataRetriever.METADATA_KEY_ARTIST,
+							playingItem.getArtist())
+					.putString(MediaMetadataRetriever.METADATA_KEY_ALBUM,
+							playingItem.getAlbum())
+					.putString(MediaMetadataRetriever.METADATA_KEY_TITLE,
+							playingItem.getTitle())
+					.putLong(MediaMetadataRetriever.METADATA_KEY_DURATION,
+							playingItem.getDuration())
+					.putBitmap(
+							RemoteControlClientCompat.MetadataEditorCompat.METADATA_KEY_ARTWORK,
+							MusicRetriever.getArtForDisplay()).apply();
 
-            mRemoteControlClientCompat.setTransportControlFlags(
-                    RemoteControlClient.FLAG_KEY_MEDIA_PLAY |
-                    RemoteControlClient.FLAG_KEY_MEDIA_PAUSE |
-                    RemoteControlClient.FLAG_KEY_MEDIA_NEXT |
-                    RemoteControlClient.FLAG_KEY_MEDIA_STOP);
+			// starts preparing the media player in the background. When it's
+			// done, it will call
+			// our OnPreparedListener (that is, the onPrepared() method on this
+			// class, since we set
+			// the listener to 'this').
+			//
+			// Until the media player is prepared, we *cannot* call start() on
+			// it!
+			mPlayer.prepareAsync();
 
-            // Update the remote controls
-            mRemoteControlClientCompat.editMetadata(true)
-                    .putString(MediaMetadataRetriever.METADATA_KEY_ARTIST, playingItem.getArtist())
-                    .putString(MediaMetadataRetriever.METADATA_KEY_ALBUM, playingItem.getAlbum())
-                    .putString(MediaMetadataRetriever.METADATA_KEY_TITLE, playingItem.getTitle())
-                    .putLong(MediaMetadataRetriever.METADATA_KEY_DURATION,
-                            playingItem.getDuration())
-                    // TODO: fetch real item artwork
-                    .putBitmap(
-                            RemoteControlClientCompat.MetadataEditorCompat.METADATA_KEY_ARTWORK,
-                            mDummyAlbumArt)
-                    .apply();
-
-            // starts preparing the media player in the background. When it's done, it will call
-            // our OnPreparedListener (that is, the onPrepared() method on this class, since we set
-            // the listener to 'this').
-            //
-            // Until the media player is prepared, we *cannot* call start() on it!
-            mPlayer.prepareAsync();
-
-            // If we are streaming from the internet, we want to hold a Wifi lock, which prevents
-            // the Wifi radio from going to sleep while the song is playing. If, on the other hand,
-            // we are *not* streaming, we want to release the lock if we were holding it before.
-            if (mIsStreaming) mWifiLock.acquire();
-            else if (mWifiLock.isHeld()) mWifiLock.release();
-        }
-        catch (IOException ex) {
-            Log.e("MusicService", "IOException playing next song: " + ex.getMessage());
-            ex.printStackTrace();
-        }
+			// If we are streaming from the internet, we want to hold a Wifi
+			// lock, which prevents
+			// the Wifi radio from going to sleep while the song is playing. If,
+			// on the other hand,
+			// we are *not* streaming, we want to release the lock if we were
+			// holding it before.
+			if (mIsStreaming)
+				mWifiLock.acquire();
+			else if (mWifiLock.isHeld())
+				mWifiLock.release();
+		} catch (IOException ex) {
+			Log.e("MusicService",
+					"IOException playing next song: " + ex.getMessage());
+			ex.printStackTrace();
+		}
     }
+
+    /**
+	 * Starts playing the a given song. It takes an int provided in an intent's
+	 * extras
+	 */
+	public synchronized void playGivenSong(int p) {
+		mState = State.Stopped;
+		relaxResources(false); // release everything except MediaPlayer
+		MusicRetriever.Item playingItem = null;
+		mIsStreaming = false; // playing a locally available song
+		try {
+			playingItem = mRetriever.getGivenItem(p);
+			mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+		} catch (Exception e) {
+			mRetriever.getGivenItem(0);
+		}
+		try {
+			mPlayer.setDataSource(getApplicationContext(), playingItem.getURI());
+		} catch (Exception e) {
+			
+		}
+
+		if (playingItem == null) {
+			Toast.makeText(
+					this,
+					"No available music to play. Place some music on your external storage "
+							+ "device (e.g. your SD card) and try again.",
+					Toast.LENGTH_LONG).show();
+			processStopRequest(true); // stop everything!
+			return;
+		}
+
+		mSongTitle = playingItem.getTitle();
+		mArtistTitle = playingItem.getArtist();
+
+		mState = State.Preparing;
+		setUpAsForeground(mSongTitle + " (loading)");
+
+		// Use the media button APIs (if available) to register ourselves for
+		// media button
+		// events
+
+		MediaButtonHelper.registerMediaButtonEventReceiverCompat(mAudioManager,
+				mMediaButtonReceiverComponent);
+
+		// Use the remote control APIs (if available) to set the playback state
+
+		if (mRemoteControlClientCompat == null) {
+			Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+			intent.setComponent(mMediaButtonReceiverComponent);
+			mRemoteControlClientCompat = new RemoteControlClientCompat(
+					PendingIntent.getBroadcast(this /* context */, 0 /*
+																	 * requestCode,
+																	 * ignored
+																	 */,
+							intent /* intent */, 0 /* flags */));
+			RemoteControlHelper.registerRemoteControlClient(mAudioManager,
+					mRemoteControlClientCompat);
+		}
+
+		mRemoteControlClientCompat
+				.setPlaybackState(RemoteControlClient.PLAYSTATE_PLAYING);
+
+		mRemoteControlClientCompat
+				.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY
+						| RemoteControlClient.FLAG_KEY_MEDIA_PAUSE
+						| RemoteControlClient.FLAG_KEY_MEDIA_NEXT
+						| RemoteControlClient.FLAG_KEY_MEDIA_STOP);
+
+		// Update the remote controls
+		try {
+			mRemoteControlClientCompat
+					.editMetadata(true)
+					.putString(MediaMetadataRetriever.METADATA_KEY_ARTIST,
+							playingItem.getArtist())
+					.putString(MediaMetadataRetriever.METADATA_KEY_ALBUM,
+							playingItem.getAlbum())
+					.putString(MediaMetadataRetriever.METADATA_KEY_TITLE,
+							playingItem.getTitle())
+					.putLong(MediaMetadataRetriever.METADATA_KEY_DURATION,
+							playingItem.getDuration())
+					// TODO: fetch real item artwork
+					.putBitmap(
+							RemoteControlClientCompat.MetadataEditorCompat.METADATA_KEY_ARTWORK,
+							MusicRetriever.getArtForDisplay()).apply();
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+		// starts preparing the media player in the background. When it's done,
+		// it will call
+		// our OnPreparedListener (that is, the onPrepared() method on this
+		// class, since we set
+		// the listener to 'this').
+		//
+		// Until the media player is prepared, we *cannot* call start() on it!
+		try {
+			mPlayer.prepareAsync();
+		} catch (Exception e) {
+		}
+		// createMediaPlayerIfNeeded();
+		// If we are streaming from the internet, we want to hold a Wifi lock,
+		// which prevents
+		// the Wifi radio from going to sleep while the song is playing. If, on
+		// the other hand,
+		// we are *not* streaming, we want to release the lock if we were
+		// holding it before.
+		if (mIsStreaming)
+			mWifiLock.acquire();
+		else if (mWifiLock.isHeld())
+			mWifiLock.release();
+	}
+
+	public synchronized void playPreviousSong(String manualUrl) {
+		mState = State.Stopped;
+		relaxResources(false); // release everything except MediaPlayer
+
+		try {
+			MusicRetriever.Item playingItem = null;
+			if (manualUrl != null) {
+				// set the source of the media player to a manual URL or path
+				createMediaPlayerIfNeeded();
+				mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+				mPlayer.setDataSource(manualUrl);
+				mIsStreaming = manualUrl.startsWith("http:")
+						|| manualUrl.startsWith("https:");
+
+				playingItem = new MusicRetriever.Item(0, null, manualUrl, null,
+						0, 0);
+			} else {
+				mIsStreaming = false; // playing a locally available song
+					playingItem = mRetriever.getPreviousItem();
+				if (playingItem == null) {
+						if (!MusicRetriever.shuffle){
+							System.out.println("Playing item is null");
+							if (MusicRetriever.usingGenPlaylist){
+								playingItem = mRetriever.getGivenItem(MusicRetriever.generatedPlaylist.size() - 1);
+							}
+							else if (MusicRetriever.usingPlaylist){
+								playingItem = mRetriever.getGivenItem(MusicRetriever.playlist.size() - 1);
+							}
+							else if (MusicRetriever.usingGenPlaylist){
+									playingItem = mRetriever.getGivenItem(MusicRetriever.generatedPlaylist.size() - 1);
+								}
+							else{
+									playingItem = mRetriever.getGivenItem(MusicRetriever.songs.size() - 1);
+								}
+							
+						    } else {
+							if (MusicRetriever.usingGenPlaylist){
+								playingItem = mRetriever.getGivenItem(MusicRetriever.ShuffledgeneratedPlaylist.size() - 1);
+								}
+							else if (MusicRetriever.usingPlaylist){
+								playingItem = mRetriever.getGivenItem(MusicRetriever.Shuffledplaylist.size() - 1);
+								}
+							else if (MusicRetriever.usingGenPlaylist){
+								playingItem = mRetriever.getGivenItem(MusicRetriever.ShuffledgeneratedPlaylist.size() - 1);
+								}
+							else{
+								playingItem = mRetriever.getGivenItem(MusicRetriever.ShuffledmSongList.size() - 1);
+								}
+						    }
+						} 
+
+				// set the source of the media player a a content URI
+				createMediaPlayerIfNeeded();
+				mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+				mPlayer.setDataSource(getApplicationContext(),
+						playingItem.getURI());
+			}
+
+			mSongTitle = playingItem.getTitle();
+			mArtistTitle = playingItem.getArtist();
+
+			mState = State.Preparing;
+			setUpAsForeground(mSongTitle);
+
+			MediaButtonHelper.registerMediaButtonEventReceiverCompat(
+					mAudioManager, mMediaButtonReceiverComponent);
+
+			if (mRemoteControlClientCompat == null) {
+				Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+				intent.setComponent(mMediaButtonReceiverComponent);
+				mRemoteControlClientCompat = new RemoteControlClientCompat(
+						PendingIntent.getBroadcast(this /* context */, 0 /*
+																		 * requestCode
+																		 * ,
+																		 * ignored
+																		 */,
+								intent /* intent */, 0 /* flags */));
+				RemoteControlHelper.registerRemoteControlClient(mAudioManager,
+						mRemoteControlClientCompat);
+			}
+
+			mRemoteControlClientCompat
+					.setPlaybackState(RemoteControlClient.PLAYSTATE_PLAYING);
+
+			mRemoteControlClientCompat
+					.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY
+							| RemoteControlClient.FLAG_KEY_MEDIA_PAUSE
+							| RemoteControlClient.FLAG_KEY_MEDIA_NEXT
+							| RemoteControlClient.FLAG_KEY_MEDIA_STOP);
+
+			// Update the remote controls
+			mRemoteControlClientCompat
+					.editMetadata(true)
+					.putString(MediaMetadataRetriever.METADATA_KEY_ARTIST,
+							playingItem.getArtist())
+					.putString(MediaMetadataRetriever.METADATA_KEY_ALBUM,
+							playingItem.getAlbum())
+					.putString(MediaMetadataRetriever.METADATA_KEY_TITLE,
+							playingItem.getTitle())
+					.putLong(MediaMetadataRetriever.METADATA_KEY_DURATION,
+							playingItem.getDuration())
+					// TODO: fetch real item artwork
+					.putBitmap(
+							RemoteControlClientCompat.MetadataEditorCompat.METADATA_KEY_ARTWORK,
+							MusicRetriever.getArtForDisplay()).apply();
+
+			mPlayer.prepareAsync();
+			if (mIsStreaming)
+				mWifiLock.acquire();
+			else if (mWifiLock.isHeld())
+				mWifiLock.release();
+		} catch (IOException ex) {
+			Log.e("MusicService",
+					"IOException playing next song: " + ex.getMessage());
+			ex.printStackTrace();
+		}
+
+	}
 
     /** Called when media player is done playing current song. */
-    public void onCompletion(MediaPlayer player) {
-        // The media player finished playing the current song, so we go ahead and start the next.
-        playNextSong(null);
-    }
+	public synchronized void onCompletion(MediaPlayer player) {
+		while (constructingPlaylist){
+			//do nothing
+			try {
+				wait(1000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+		// The media player finished playing the current song, so we go ahead
+		// and start the next.
+		try {
+			playNextSong(null);
+		} catch (Exception e) {
+			playGivenSong(0);
+		}
+	}
 
     /** Called when media player is done preparing. */
     public void onPrepared(MediaPlayer player) {
@@ -525,32 +1002,119 @@ public class MusicService extends Service implements OnCompletionListener, OnPre
      * something the user is actively aware of (such as playing music), and must appear to the
      * user as a notification. That's why we create the notification here.
      */
-    void setUpAsForeground(String text) {
-        PendingIntent pi = PendingIntent.getActivity(getApplicationContext(), 0,
-                new Intent(getApplicationContext(), MainActivity.class),
-                PendingIntent.FLAG_UPDATE_CURRENT);
-        mNotification = new Notification();
-        mNotification.tickerText = text;
-        mNotification.icon = R.drawable.ic_stat_playing;
-        mNotification.flags |= Notification.FLAG_ONGOING_EVENT;
-        mNotification.setLatestEventInfo(getApplicationContext(), "RandomMusicPlayer",
-                text, pi);
-        startForeground(NOTIFICATION_ID, mNotification);
-    }
+	/**
+	 * Configures service as a foreground service. A foreground service is a
+	 * service that's doing something the user is actively aware of (such as
+	 * playing music), and must appear to the user as a notification. That's why
+	 * we create the notification here.
+	 */
+	void setUpAsForeground(String text) {
+		Bitmap icon = null;
+		PendingIntent pi = PendingIntent.getActivity(getApplicationContext(),
+				0, new Intent(getApplicationContext(), MainActivity.class),
+				PendingIntent.FLAG_UPDATE_CURRENT);
+		mNotification = new Notification();
+		mNotification.tickerText = text;
+		mNotification.icon = R.drawable.ic_media_play;
+		try {
+			icon = MusicRetriever.getArtForDisplay();
+			Bitmap scaled = Bitmap.createScaledBitmap(icon, 100, 100, true);
+			mNotification.largeIcon = scaled;
+		} catch (Exception e) {
+			mNotification.largeIcon = null;
+		}
+		mNotification.flags |= Notification.FLAG_ONGOING_EVENT;
+		try {
+			mNotification.setLatestEventInfo(getApplicationContext(),
+					MusicRetriever.getCurrentSong().getArtist(), text, pi);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		startForeground(NOTIFICATION_ID, mNotification);
+	}
 
     /**
      * Called when there's an error playing media. When this happens, the media player goes to
      * the Error state. We warn the user about the error and reset the media player.
      */
     public boolean onError(MediaPlayer mp, int what, int extra) {
-        Toast.makeText(getApplicationContext(), "Media player error! Resetting.",
-            Toast.LENGTH_SHORT).show();
-        Log.e(TAG, "Error: what=" + String.valueOf(what) + ", extra=" + String.valueOf(extra));
+    	try {
+			playingItem = MusicRetriever.getCurrentSong();
+		} catch (InterruptedException e2) {
+			e2.printStackTrace();
+		}
+		mPlayer.reset();
+		try {
+			mPlayer.setDataSource(getApplicationContext(), playingItem.getURI());
+		} catch (IllegalArgumentException e1) {
+			e1.printStackTrace();
+		} catch (SecurityException e1) {
+			e1.printStackTrace();
+		} catch (IllegalStateException e1) {
+			e1.printStackTrace();
+		} catch (Exception e1) {
+			e1.printStackTrace();
+		}
 
-        mState = State.Stopped;
-        relaxResources(true);
-        giveUpAudioFocus();
-        return true; // true indicates we handled the error
+
+		mSongTitle = playingItem.getTitle();
+
+		mState = State.Preparing;
+		setUpAsForeground(mSongTitle);
+
+		MediaButtonHelper.registerMediaButtonEventReceiverCompat(mAudioManager,
+				mMediaButtonReceiverComponent);
+
+		if (mRemoteControlClientCompat == null) {
+			Intent intent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+			intent.setComponent(mMediaButtonReceiverComponent);
+			mRemoteControlClientCompat = new RemoteControlClientCompat(
+					PendingIntent.getBroadcast(this, 0 , intent , 0 ));
+			RemoteControlHelper.registerRemoteControlClient(mAudioManager,
+					mRemoteControlClientCompat);
+		}
+
+		mRemoteControlClientCompat
+				.setPlaybackState(RemoteControlClient.PLAYSTATE_PLAYING);
+
+		mRemoteControlClientCompat
+				.setTransportControlFlags(RemoteControlClient.FLAG_KEY_MEDIA_PLAY
+						| RemoteControlClient.FLAG_KEY_MEDIA_PAUSE
+						| RemoteControlClient.FLAG_KEY_MEDIA_NEXT
+						| RemoteControlClient.FLAG_KEY_MEDIA_STOP);
+
+		try {
+			mRemoteControlClientCompat
+					.editMetadata(true)
+					.putString(MediaMetadataRetriever.METADATA_KEY_ARTIST,
+							playingItem.getArtist())
+					.putString(MediaMetadataRetriever.METADATA_KEY_ALBUM,
+							playingItem.getAlbum())
+					.putString(MediaMetadataRetriever.METADATA_KEY_TITLE,
+							playingItem.getTitle())
+					.putLong(MediaMetadataRetriever.METADATA_KEY_DURATION,
+							playingItem.getDuration())
+					.putBitmap(
+							RemoteControlClientCompat.MetadataEditorCompat.METADATA_KEY_ARTWORK,
+							MusicRetriever.getArtForDisplay()).apply();
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}
+		try {
+		mPlayer.prepareAsync();
+		} catch (Exception e) {
+			playNextSong(null);
+		}
+		if (mIsStreaming)
+			mWifiLock.acquire();
+		else if (mWifiLock.isHeld())
+			mWifiLock.release();
+
+		Log.e(TAG,
+				"Error: what=" + String.valueOf(what) + ", extra="
+						+ String.valueOf(extra));
+
+		return true; // true indicates we handled the error
     }
 
     public void onGainedAudioFocus() {
